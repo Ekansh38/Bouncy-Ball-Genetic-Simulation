@@ -1,2 +1,2 @@
-./main/target/
-./main/Cargo.lock
+/main/target/*
+/main/Cargo.lock
