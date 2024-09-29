@@ -33,11 +33,11 @@ async fn main() {
     let mut particles = vec![];
     let mut mouse_tregectory: Vec<Vector> = Vec::new();
 
-    request_new_screen_size(1800.0, 800.0);
+    request_new_screen_size(800.0, 800.0);
 
-    particles.push(Particle::new(600.0, -500.0, 35.0, RED, 0.9, 1.0, 5.0));
-    particles.push(Particle::new(900.0, -300.0, 50.0, YELLOW, 0.9, 1.0, 6.0));
-    particles.push(Particle::new(400.0, -300.0, 70.0, BLUE, 0.9, 1.0, 8.0));
+    particles.push(Particle::new(600.0, -500.0, 35.0, RED, 0.9, 0.6, 5.0));
+    particles.push(Particle::new(900.0, -300.0, 50.0, YELLOW, 0.9, 0.6, 6.0));
+    particles.push(Particle::new(400.0, -300.0, 70.0, BLUE, 0.9, 0.6, 16.0));
 
     // Fps Logic
     let mut fps = 0;
@@ -145,7 +145,6 @@ impl Vector {
         (self.x * self.x + self.y * self.y).sqrt()
     }
 }
-
 
 struct Particle {
     pos: Vector,
