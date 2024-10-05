@@ -1,4 +1,9 @@
+use ::rand::thread_rng;
+use ::rand::Rng; // Add this import to use gen_range
 use macroquad::prelude::*;
+use std::fs::OpenOptions;
+use std::io::Result;
+use std::io::Write;
 
 fn update_all_particles_as_balls(
     particles: &mut Vec<Particle>,
@@ -6,13 +11,16 @@ fn update_all_particles_as_balls(
     mouse_tregectory: &mut Vec<Vector>,
 ) {
     for particle in particles.iter_mut() {
-        particle.throwing_logic(mouse_tregectory);
+        // particle.throwing_logic(mouse_tregectory);
         particle.update(delta_time);
     }
     for i in 0..particles.len() {
         for j in i + 1..particles.len() {
             let (left, right) = particles.split_at_mut(j);
-            left[i].collide(&mut right[0]);
+            let new_particle = left[i].collide(&mut right[0]);
+            if new_particle.is_some() {
+                particles.push(new_particle.unwrap());
+            }
         }
     }
 }
@@ -33,11 +41,11 @@ async fn main() {
     let mut particles = vec![];
     let mut mouse_tregectory: Vec<Vector> = Vec::new();
 
-    request_new_screen_size(800.0, 800.0);
+    request_new_screen_size(5000.0, 5000.0);
 
-    particles.push(Particle::new(600.0, -500.0, 35.0, RED, 0.9, 0.6, 5.0));
-    particles.push(Particle::new(900.0, -300.0, 50.0, YELLOW, 0.9, 0.6, 6.0));
-    particles.push(Particle::new(400.0, -300.0, 70.0, BLUE, 0.9, 0.6, 16.0));
+    particles.push(Particle::new(1000.0, 100.0, 35.0, RED, 1.0, 1.0, 2.0));
+    particles.push(Particle::new(100.0, 200.0, 30.0, YELLOW, 1.0, 1.0, 4.0));
+    particles.push(Particle::new(600.0, 50.0, 30.0, BLUE, 1.0, 1.0, 3.0));
 
     // Fps Logic
     let mut fps = 0;
@@ -48,7 +56,8 @@ async fn main() {
 
     loop {
         let current_time = get_time();
-        let delta_time = (current_time - previous_time) as f32;
+        let mut delta_time = (current_time - previous_time) as f32;
+        delta_time = delta_time * 2.0;
         previous_time = current_time;
 
         clear_background(BLACK);
@@ -148,41 +157,48 @@ impl Vector {
 
 struct Particle {
     pos: Vector,
-    r: f32,
-    c: Color,
+    radius: f32,
+    color: Color,
     vel: Vector,
-    grabing: bool,
+    is_grabing: bool,
     surface_friction: f32,
     retention: f32,
     mass: f32,
     force: Vector,
+    max_speed: Vector,
+    made_baby: bool,
+    made_baby_counter: f32,
 }
 
 impl Particle {
     fn new(
         x: f32,
         y: f32,
-        r: f32,
-        c: Color,
+        radius: f32,
+        color: Color,
         surface_friction: f32,
         retention: f32,
         mass: f32,
     ) -> Self {
+        let mut rng = thread_rng();
         Self {
             pos: Vector::new(x, y),
-            r,
-            c,
-            vel: Vector::new(0.0, 0.0),
-            grabing: false,
+            radius,
+            color,
+            vel: Vector::new(rng.gen_range(-100.0..=100.0), rng.gen_range(-100.0..=100.0)),
+            is_grabing: false,
             surface_friction,
             retention,
             mass: mass / 4.0,
             force: Vector::new(0.0, 0.0),
+            max_speed: Vector::new(250.0, 250.0),
+            made_baby: false,
+            made_baby_counter: 0.0,
         }
     }
 
-    fn friction_checks(&mut self) {
-        if self.pos.y + self.r >= screen_height() {
+    fn surface_friction(&mut self) {
+        if self.pos.y + self.radius >= screen_height() {
             self.vel.x = self.vel.x * self.surface_friction
         }
     }
@@ -199,24 +215,28 @@ impl Particle {
     }
 
     fn apply_gravity(&mut self, delta_time: f32) {
-        // Apply gravity
         let pixels_per_meter = 100.0;
-        let universal_gravity_constant = 9.8; // 9.8 m/s^2
+        let universal_gravity_constant = 0.5; // 9.8 m/s^2
         let gravity = universal_gravity_constant * pixels_per_meter;
         self.vel.y += gravity * delta_time;
     }
 
-    fn edges(&mut self) {
-        if self.pos.y + self.r > screen_height() {
-            self.pos.y = screen_height() - self.r;
+    fn check_edges(&mut self) {
+        if self.pos.y + self.radius > screen_height() {
+            self.pos.y = screen_height() - self.radius;
             self.vel.y = self.vel.y * -1.0 * self.retention;
         }
 
-        if self.pos.x + self.r > screen_width() {
-            self.pos.x = screen_width() - self.r;
+        if self.pos.y - self.radius < 0.0 {
+            self.pos.y = self.radius;
+            self.vel.y = self.vel.y * -1.0 * self.retention;
+        }
+
+        if self.pos.x + self.radius > screen_width() {
+            self.pos.x = screen_width() - self.radius;
             self.vel.x = self.vel.x * -1.0 * self.retention;
-        } else if self.pos.x - self.r < 0.0 {
-            self.pos.x = self.r;
+        } else if self.pos.x - self.radius < 0.0 {
+            self.pos.x = self.radius;
             self.vel.x = self.vel.x * -1.0 * self.retention;
         }
     }
@@ -246,12 +266,34 @@ impl Particle {
         }
     }
 
-    fn update(&mut self, delta_time: f32) {
-        if !self.grabing {
+    fn update(&mut self, delta_time: f32) -> Result<()> {
+        if !self.is_grabing {
             self.apply_gravity(delta_time);
-            self.friction_checks();
+            self.surface_friction();
             self.euler_integration(delta_time);
-            self.edges();
+            self.check_edges();
+
+            if self.made_baby_counter > 0.0 {
+                self.made_baby_counter -= 1.0 * delta_time;
+            } else {
+                self.made_baby_counter = 0.0;
+                self.made_baby = false;
+            }
+
+            if self.made_baby {
+                self.color = RED;
+            }
+            if !self.made_baby {
+                self.color = GREEN;
+            }
+
+            if self.vel.x > self.max_speed.x {
+                self.vel.x = self.max_speed.x;
+            }
+
+            if self.vel.y > self.max_speed.y {
+                self.vel.y = self.max_speed.y;
+            }
         } else {
             self.pos.x = mouse_position().0;
             self.pos.y = mouse_position().1;
@@ -262,29 +304,37 @@ impl Particle {
 
         // Draw the particle
         self.draw();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("data.txt")?;
+
+        file.write_all(format!("x: {}, y: {}\n", self.vel.x, self.vel.y).as_bytes())?;
+
+        Ok(())
     }
 
     fn draw(&self) {
-        draw_circle(self.pos.x, self.pos.y, self.r + 2.0, WHITE);
-        draw_circle(self.pos.x, self.pos.y, self.r, self.c);
+        draw_circle(self.pos.x, self.pos.y, self.radius + 2.0, WHITE);
+        draw_circle(self.pos.x, self.pos.y, self.radius, self.color);
     }
 
     fn is_grabing(&mut self) -> i32 {
         let mouse_pos = mouse_position();
         if is_mouse_button_pressed(MouseButton::Left)
-            && mouse_pos.0 > self.pos.x - self.r
-            && mouse_pos.0 < self.pos.x + self.r
-            && mouse_pos.1 > self.pos.y - self.r
-            && mouse_pos.1 < self.pos.y + self.r
+            && mouse_pos.0 > self.pos.x - self.radius
+            && mouse_pos.0 < self.pos.x + self.radius
+            && mouse_pos.1 > self.pos.y - self.radius
+            && mouse_pos.1 < self.pos.y + self.radius
         {
-            self.grabing = true;
-        } else if is_mouse_button_released(MouseButton::Left) && self.grabing {
-            self.grabing = false;
+            self.is_grabing = true;
+        } else if is_mouse_button_released(MouseButton::Left) && self.is_grabing {
+            self.is_grabing = false;
             self.vel.y = 0.0;
             return -1;
         }
 
-        if self.grabing {
+        if self.is_grabing {
             return 1;
         } else {
             return 0;
@@ -295,18 +345,36 @@ impl Particle {
         self.force = force;
     }
 
-    fn collide(&mut self, other: &mut Particle) {
+    fn create_baby(&self, other: &Particle) -> Particle {
+        return Particle::new(
+            self.pos.x,
+            self.pos.y,
+            self.radius / 2.0,
+            self.color,
+            self.surface_friction,
+            self.retention,
+            self.mass * 2.0,
+        );
+    }
+    fn collide(&mut self, other: &mut Particle) -> Option<Particle> {
         let distance = self.pos.dist(&other.pos);
-        let sum_radii = self.r + other.r;
+        let sum_radii = self.radius + other.radius;
 
         if distance < sum_radii {
             let line_of_impact = other.pos.subract(&self.pos).divide(distance);
+
+            // Position correction
+            let overlap = sum_radii - distance;
+            let correction = line_of_impact.multiply(overlap / 2.0);
+
+            self.pos = self.pos.subract(&correction);
+            other.pos = other.pos.add(&correction);
 
             let relative_velocity = other.vel.subract(&self.vel);
             let velocity_along_normal = relative_velocity.dot(&line_of_impact);
 
             if velocity_along_normal > 0.0 {
-                return;
+                return Option::None;
             }
 
             let restitution = 0.7; // Elastic collision
@@ -316,6 +384,17 @@ impl Particle {
 
             self.vel = self.vel.subract(&impulse.divide(self.mass));
             other.vel = other.vel.add(&impulse.divide(other.mass));
+
+            if !self.made_baby && !other.made_baby {
+                self.made_baby = true;
+                other.made_baby = true;
+                let baby_delay = 5.0;
+                self.made_baby_counter = baby_delay;
+                other.made_baby_counter = baby_delay;
+                return Some(self.create_baby(other));
+            }
         }
+
+        None
     }
 }
