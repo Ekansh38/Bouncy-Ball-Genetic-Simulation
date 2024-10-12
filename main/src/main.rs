@@ -8,21 +8,43 @@ use std::io::Write;
 fn update_all_particles_as_balls(
     particles: &mut Vec<Particle>,
     delta_time: f32,
-    mouse_tregectory: &mut Vec<Vector>,
+    mouse_trajectory: &mut Vec<Vector>,
 ) {
+    // Update all particles
     for particle in particles.iter_mut() {
-        // particle.throwing_logic(mouse_tregectory);
+        // particle.throwing_logic(mouse_trajectory);
         particle.update(delta_time);
     }
+
+    // Collect indices of dead particles
+    let dead_indices: Vec<usize> = particles
+        .iter()
+        .enumerate()
+        .filter(|(_, particle)| particle.dead)
+        .map(|(index, _)| index)
+        .collect();
+
+    // Remove dead particles
+    for index in dead_indices.iter().rev() {
+        particles.remove(*index);
+    }
+
+    // Handle collisions
+    let mut new_particles = Vec::new(); // Temporary vector to hold new particles
+
     for i in 0..particles.len() {
-        for j in i + 1..particles.len() {
+        for j in (i + 1)..particles.len() {
+            // Use split_at_mut to safely borrow particles for collision checking
             let (left, right) = particles.split_at_mut(j);
-            let new_particle = left[i].collide(&mut right[0]);
-            if new_particle.is_some() {
-                particles.push(new_particle.unwrap());
+            // Now we can access left[i] and right[0] without mutable borrow conflicts
+            if let Some(new_particle) = left[i].collide(&mut right[0]) {
+                new_particles.push(new_particle);
             }
         }
     }
+
+    // Add new particles to the original vector
+    particles.extend(new_particles);
 }
 
 fn update_all_particles(
@@ -41,11 +63,18 @@ async fn main() {
     let mut particles = vec![];
     let mut mouse_tregectory: Vec<Vector> = Vec::new();
 
-    request_new_screen_size(5000.0, 5000.0);
+    request_new_screen_size(1500.0, 800.0);
 
-    particles.push(Particle::new(1000.0, 100.0, 35.0, RED, 1.0, 1.0, 2.0));
-    particles.push(Particle::new(100.0, 200.0, 30.0, YELLOW, 1.0, 1.0, 4.0));
-    particles.push(Particle::new(600.0, 50.0, 30.0, BLUE, 1.0, 1.0, 3.0));
+    particles.push(Particle::new(1500.0, 50.0, 10.0, RED, 1.0, 1.0, 2.0, 50.0));
+    particles.push(Particle::new(0.0, 50.0, 10.0, YELLOW, 1.0, 1.0, 4.0, 50.0));
+    particles.push(Particle::new(1500.0, 50.0, 10.0, RED, 1.0, 1.0, 2.0, 50.0));
+    particles.push(Particle::new(0.0, 50.0, 10.0, YELLOW, 1.0, 1.0, 4.0, 50.0));
+    particles.push(Particle::new(
+        500.0, 50.0, 50.0, YELLOW, 1.0, 1.0, 4.0, 50.0,
+    ));
+    particles.push(Particle::new(
+        200.0, 50.0, 50.0, YELLOW, 1.0, 1.0, 4.0, 50.0,
+    ));
 
     // Fps Logic
     let mut fps = 0;
@@ -55,6 +84,10 @@ async fn main() {
     let mut previous_time = get_time();
 
     loop {
+        let total_particles = particles.len();
+        let sum_sizes: f32 = particles.iter().map(|particle| particle.radius).sum();
+        let avg_size = sum_sizes / total_particles as f32;
+        println!("Average Size: {}", avg_size);
         let current_time = get_time();
         let mut delta_time = (current_time - previous_time) as f32;
         delta_time = delta_time * 2.0;
@@ -162,12 +195,18 @@ struct Particle {
     vel: Vector,
     is_grabing: bool,
     surface_friction: f32,
-    retention: f32,
+    elastisity: f32,
     mass: f32,
     force: Vector,
     max_speed: Vector,
     made_baby: bool,
     made_baby_counter: f32,
+    life_span: f32,
+    time_alive: f32,
+    dead: bool,
+    rand_change_chance: f32,
+    rand_range: f32,
+    times_reproduced: i32,
 }
 
 impl Particle {
@@ -179,21 +218,31 @@ impl Particle {
         surface_friction: f32,
         retention: f32,
         mass: f32,
+        rand_range: f32,
     ) -> Self {
         let mut rng = thread_rng();
         Self {
             pos: Vector::new(x, y),
             radius,
             color,
-            vel: Vector::new(rng.gen_range(-100.0..=100.0), rng.gen_range(-100.0..=100.0)),
+            vel: Vector::new(
+                rng.gen_range(-rand_range..=rand_range),
+                rng.gen_range(-rand_range / 3.0..=rand_range / 3.0),
+            ),
             is_grabing: false,
             surface_friction,
-            retention,
+            elastisity: retention,
             mass: mass / 4.0,
             force: Vector::new(0.0, 0.0),
-            max_speed: Vector::new(250.0, 250.0),
+            max_speed: Vector::new(50.0, 50.0),
             made_baby: false,
             made_baby_counter: 0.0,
+            life_span: 15.0,
+            time_alive: 0.0,
+            dead: false,
+            rand_change_chance: 0.1,
+            rand_range,
+            times_reproduced: 0,
         }
     }
 
@@ -224,23 +273,22 @@ impl Particle {
     fn check_edges(&mut self) {
         if self.pos.y + self.radius > screen_height() {
             self.pos.y = screen_height() - self.radius;
-            self.vel.y = self.vel.y * -1.0 * self.retention;
+            self.vel.y = self.vel.y.abs() * -self.elastisity; // Only invert once
         }
 
         if self.pos.y - self.radius < 0.0 {
             self.pos.y = self.radius;
-            self.vel.y = self.vel.y * -1.0 * self.retention;
+            self.vel.y = self.vel.y.abs() * self.elastisity; // Avoid multiple inversions
         }
 
         if self.pos.x + self.radius > screen_width() {
             self.pos.x = screen_width() - self.radius;
-            self.vel.x = self.vel.x * -1.0 * self.retention;
+            self.vel.x = self.vel.x.abs() * -self.elastisity;
         } else if self.pos.x - self.radius < 0.0 {
             self.pos.x = self.radius;
-            self.vel.x = self.vel.x * -1.0 * self.retention;
+            self.vel.x = self.vel.x.abs() * self.elastisity;
         }
     }
-
     fn throwing_logic(&mut self, mouse_tregectory: &mut Vec<Vector>) {
         let grabing = self.is_grabing();
 
@@ -280,6 +328,17 @@ impl Particle {
                 self.made_baby = false;
             }
 
+            if self.times_reproduced > 3 {
+                self.dead = true;
+            }
+
+            self.time_alive += 1.0 * delta_time;
+
+            if self.time_alive > self.life_span {
+                // KIll the particle
+                self.dead = true;
+            }
+
             if self.made_baby {
                 self.color = RED;
             }
@@ -293,6 +352,13 @@ impl Particle {
 
             if self.vel.y > self.max_speed.y {
                 self.vel.y = self.max_speed.y;
+            }
+
+            if self.vel.x < -self.max_speed.x {
+                self.vel.x = -self.max_speed.x;
+            }
+            if self.vel.y < -self.max_speed.y {
+                self.vel.y = -self.max_speed.y;
             }
         } else {
             self.pos.x = mouse_position().0;
@@ -346,21 +412,55 @@ impl Particle {
     }
 
     fn create_baby(&self, other: &Particle) -> Particle {
+        // Make sure position is in the middle of the two particles
+        let mut x = (self.pos.x + other.pos.x) / 2.0;
+        let mut y = (self.pos.y + other.pos.y) / 2.0;
+
+        // Position Checks
+
+        if x < 0.0 {
+            x = 0.0;
+        }
+        if x > screen_width() {
+            x = screen_width();
+        }
+        if y < 0.0 {
+            y = 0.0;
+        }
+        if y > screen_height() {
+            y = screen_height();
+        }
+
+        let radius = (self.radius + other.radius) / 2.0;
+        let color = GREEN;
+        let surface_friction = 1.0;
+        let elastisity = (self.elastisity + other.elastisity) / 2.0;
+        let mass = (self.mass + other.mass) / 2.0;
+        let rand_range = (self.rand_range + other.rand_range) / 2.0;
         return Particle::new(
-            self.pos.x,
-            self.pos.y,
-            self.radius / 2.0,
-            self.color,
-            self.surface_friction,
-            self.retention,
-            self.mass * 2.0,
+            x,
+            y,
+            radius,
+            color,
+            surface_friction,
+            elastisity,
+            mass,
+            rand_range,
         );
+    }
+    fn can_reproduce(&self) -> bool {
+        let margin = 10.0; // Adjust this as necessary
+        self.pos.x > margin
+            && self.pos.x < screen_width() - margin
+            && self.pos.y > margin
+            && self.pos.y < screen_height() - margin
     }
     fn collide(&mut self, other: &mut Particle) -> Option<Particle> {
         let distance = self.pos.dist(&other.pos);
         let sum_radii = self.radius + other.radius;
+        let min_reproduction_distance = 20.0; // Adjust as necessary
 
-        if distance < sum_radii {
+        if distance < sum_radii && distance > min_reproduction_distance {
             let line_of_impact = other.pos.subract(&self.pos).divide(distance);
 
             // Position correction
@@ -377,20 +477,34 @@ impl Particle {
                 return Option::None;
             }
 
-            let restitution = 0.7; // Elastic collision
-            let impulse_scalar = -(1.0 + restitution) * velocity_along_normal;
+            let impulse_scalar = -(1.0 + self.elastisity) * velocity_along_normal;
 
             let impulse = line_of_impact.multiply(impulse_scalar);
 
             self.vel = self.vel.subract(&impulse.divide(self.mass));
             other.vel = other.vel.add(&impulse.divide(other.mass));
 
-            if !self.made_baby && !other.made_baby {
+            self.pos.x = self.pos.x.clamp(self.radius, screen_width() - self.radius);
+            self.pos.y = self.pos.y.clamp(self.radius, screen_height() - self.radius);
+
+            other.pos.x = other
+                .pos
+                .x
+                .clamp(other.radius, screen_width() - other.radius);
+            other.pos.y = other
+                .pos
+                .y
+                .clamp(other.radius, screen_height() - other.radius);
+
+            if !self.made_baby && !other.made_baby && self.can_reproduce() && other.can_reproduce()
+            {
                 self.made_baby = true;
                 other.made_baby = true;
                 let baby_delay = 5.0;
                 self.made_baby_counter = baby_delay;
                 other.made_baby_counter = baby_delay;
+                self.times_reproduced += 1;
+                other.times_reproduced += 1;
                 return Some(self.create_baby(other));
             }
         }
