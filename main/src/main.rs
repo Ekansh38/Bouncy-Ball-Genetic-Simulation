@@ -237,7 +237,7 @@ impl Particle {
             max_speed: Vector::new(50.0, 50.0),
             made_baby: false,
             made_baby_counter: 0.0,
-            life_span: 15.0,
+            life_span: 30.0,
             time_alive: 0.0,
             dead: false,
             rand_change_chance: 0.1,
@@ -412,6 +412,7 @@ impl Particle {
     }
 
     fn create_baby(&self, other: &Particle) -> Particle {
+        let mut rng = thread_rng();
         // Make sure position is in the middle of the two particles
         let mut x = (self.pos.x + other.pos.x) / 2.0;
         let mut y = (self.pos.y + other.pos.y) / 2.0;
@@ -431,12 +432,20 @@ impl Particle {
             y = screen_height();
         }
 
-        let radius = (self.radius + other.radius) / 2.0;
+        let mut radius = (self.radius + other.radius) / 2.0;
         let color = GREEN;
         let surface_friction = 1.0;
         let elastisity = (self.elastisity + other.elastisity) / 2.0;
         let mass = (self.mass + other.mass) / 2.0;
         let rand_range = (self.rand_range + other.rand_range) / 2.0;
+
+        let mutate = rng.gen_range(0.0..=1.0);
+
+        if mutate < self.rand_change_chance {
+            // Mutate size
+            let size_change = rng.gen_range(-30.0..=30.0);
+            radius = radius + size_change;
+        }
         return Particle::new(
             x,
             y,
